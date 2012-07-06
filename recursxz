@@ -1,0 +1,391 @@
+#!/usr/bin/perl
+use 5.010;
+use strict;
+use warnings;
+use File::Find;
+use File::Basename qw(dirname);
+use Cwd qw(realpath);
+use Getopt::Long;
+use constant {
+    MODE_NORMAL => 1,
+    MODE_LOWHANGING => 2,
+    MODE_SMASH => 3,
+    MODE_FAST => 4,
+
+	# Verbosity levels
+	M_STANDARD => 1,
+	M_VERBOSE => 2,
+	M_VERYVERBOSE => 3,
+	M_DEBUG => 4,
+
+    true => 1,
+    false => 0,
+};
+
+
+$SIG{INT} = sub
+{
+    print 'Interrupted'."\n";
+    wexit(1);
+};
+
+my $VERSION = '0.1';
+my $total = 0;
+my $after = 0;
+my $mode = MODE_NORMAL;
+my $verbosity = M_STANDARD;
+
+# Purpose: Exit with the supplied return value, outputting saved space
+#       information if needed
+# Usage: wexit(RETURN VALUE);
+sub wexit
+{
+    if ($total > 0)
+    {
+        my ($saved,$type) = fsize($total-$after);
+        print 'Saved '.$saved.' '.$type."\n";
+    }
+    exit(shift(@_));
+}
+
+# Purpose: Process a file, compressing if needed
+# Usage: ProcessFile(FILE);
+sub ProcessFile
+{
+    my $file = shift;
+    my $skipReason;
+    if (-d $file)
+    {
+        $skipReason = 'is a directory';
+    }
+    elsif (! -w $file)
+    {
+        $skipReason = 'is not writable';
+        return;
+    }
+    elsif(-l $file)
+    {
+        $skipReason = 'is a symlink';
+    }
+    elsif(! -w dirname($file))
+    {
+        $skipReason = 'parent directory is not writable';
+    }
+    elsif ($file =~ /\.(gz|rar|zip|xz|bz2|rpm|deb|ace|lzma|bin|tgz|tbz2|txz)$/)
+    {
+        if ($mode == MODE_SMASH && $file !~ /\.xz$/)
+        {
+            printv(M_VERYVERBOSE,'Would skip '.$file.', but running in smash mode so continuing'."\n");
+        }
+        else
+        {
+            $skipReason = 'filetype excluded';
+        }
+    }
+
+    if ($skipReason)
+    {
+        printv(M_VERBOSE,'Skipping '.$file.': '.$skipReason."\n");
+        return;
+    }
+
+    if ($mode == MODE_LOWHANGING || $mode == MODE_FAST)
+    {
+        if (-s $file < 1048576)
+        {
+            printv(M_VERBOSE,'Skipping '.$file.': too small (low hanging fruit mode in effect)'."\n");
+            return;
+        }
+    }
+    if ($mode == MODE_FAST)
+    {
+        if (-s $file > 104857600)
+        {
+            printv(M_VERBOSE,'Skipping '.$file.': too large (fast mode in effect)'."\n");
+            return;
+        }
+    }
+
+    print "Compressing $file ...\n";
+    my $pre = -s $file;
+    if(system('xz',$file) != 0)
+    {
+        print 'xz '.$file.' failed'."\n";
+        print 'Press Control+C within two seconds to exit.'."\n";
+        sleep(2);
+        print 'Continuing...'."\n";
+        return;
+    }
+    if (! -e $file.'.xz')
+    {
+        print $file.'.xz did not exist after compression'."\n";
+        print 'Press Control+C within two seconds to exit.'."\n";
+        sleep(2);
+        print 'Continuing...'."\n";
+        return;
+    }
+    my $post = -s $file.'.xz';
+    if ($post > $pre)
+    {
+        my ($lost,$type) = fsize($post-$pre);
+        print 'Lost '.$lost.' '.$type.' by compressing '.$file.', uncompressing it...'."\n";
+        system('unxz',$file.'.xz');
+    }
+    else
+    {
+        $total += $pre;
+        $after += $post;
+        printv(M_VERYVERBOSE,'Gained '.($pre-$post).' bytes by compressing '.$file."\n");
+    }
+}
+
+# Purpose: Get the total file size and the type.
+# Usage: my($s, $t) = fsize(size);
+#  $t is MB, KB or B
+#  $s is the size in $t rounded to the nearest:
+#  	- single decimal if $t is MB
+#  	- integer if $t is KB or B
+sub fsize
+{
+	# The size
+	my $size = shift;
+	# The type it is
+	my $type = 'B';
+	# If it is above 1024 then convert to KB
+	if ($size > 1_024)
+	{
+		$size = $size / 1_024;
+		# If it is above 1024 still, convert to MB
+		if ($size > 1_024)
+		{
+			$size = $size / 1_024;
+			$type = 'MB';
+		}
+		else
+		{
+			$type = 'KiB';
+		}
+	}
+	if ($type eq 'MiB')
+	{
+		$size = sprintf("%.1f",$size);
+	}
+	else
+	{
+		# Round it off to the closest integer
+		$size = int($size + .5);
+	}
+	# Return it
+	return($size,$type);
+}
+
+# Purpose: Print a message if verbosity level matches
+# Usage: printv(VERBOSITY_LEVEL,message);
+sub printv
+{
+	my $level = shift;
+	if ($level > $verbosity)
+	{
+		return;
+	}
+	if ($level == M_DEBUG)
+	{
+		print 'Debug: ';
+	}
+	my $string = $_[0];
+	$string =~ s/\n+/\n/;
+	print $string;
+	# Flush STDOUT
+	$| = true;
+	$| = false;
+}
+
+# Purpose: Print usage information and exit
+sub usage
+{
+    print "recursxz version $VERSION\n\n";
+    print 'Usage: ' . basename($0) . " [OPTIONS] dir1 dir2 ..\n";
+    PrintHelp('-h','--help','Display this help screen');
+    PrintHelp('','--version','Display version information');
+    PrintHelp('','--lowhanging','Enable "low-hanging fruit mode", only compress files >1MiB, where the possibility for gains are the greatest');
+    PrintHelp('','--fast','Like --lowhanging, but will also skip files >100MiB');
+    PrintHelp('','--smash','Compress everything, even files already compressed with ie. gzip');
+    wexit(0);
+}
+
+# Purpose: Check for a file in path
+# Usage: InPath(FILE)
+sub InPath
+{
+	foreach (split /:/, $ENV{PATH}) { if (-x "$_/@_" and not -d "$_/@_" ) {	return 1; } } return 0;
+}
+
+# Purpose: Main logic
+sub main
+{
+    Getopt::Long::Configure ('bundling');
+    GetOptions (
+        'help|h' => \&usage,
+        'normal' => sub
+        {
+            $mode = MODE_NORMAL;
+        },
+        'fast' => sub
+        {
+            $mode = MODE_FAST;
+        },
+        'lowhanging' => sub {
+            $mode = MODE_LOWHANGING;
+        },
+        'smash' => sub {
+            $mode = MODE_SMASH;
+        },
+        'v|verbose+' => \$verbosity,
+        'version' => sub {
+            print "recursxz version $VERSION\n";
+            exit(0);
+        },
+    );
+
+    if (!InPath('xz'))
+    {
+        die("'xz' is not installed\n");
+    }
+    if (!InPath('unxz'))
+    {
+        die("'unxz' is not installed\n");
+    }
+
+    my @modeNames;
+    $modeNames[MODE_SMASH]      = 'smash';
+    $modeNames[MODE_LOWHANGING] = '"low-hanging fruit"';
+    $modeNames[MODE_NORMAL]     = 'normal';
+    $modeNames[MODE_FAST]       = 'fast';
+
+    foreach my $Dir (@ARGV)
+    {
+        if (!$Dir)
+        {
+            usage();
+        }
+        elsif(! -d $Dir)
+        {
+            die($Dir.' is not a directory'."\n");
+        }
+        elsif(! -w $Dir)
+        {
+            die($Dir.' is not writable'."\n");
+        }
+        if ($> == 0)
+        {
+            die('Refusing to run as root'."\n");
+        }
+        print 'Operating on '.realpath($Dir).' in '.$modeNames[$mode].' mode'."\n";
+
+        find({
+                no_chdir => 1,
+                wanted => sub { ProcessFile($File::Find::name); },
+                preprocess => sub {
+                    my @files;
+                    foreach my $f (sort @_)
+                    {
+                        if ($f eq '.git')
+                        {
+                            next;
+                        }
+                        push(@files,$f);
+                    }
+                    return @files;
+                },
+            },
+            $Dir
+        );
+    }
+    wexit(0);
+}
+
+main(@ARGV);
+
+__END__
+
+=head1 NAME
+
+recursxz - A program for recursively compressing files
+
+=head1 SYNOPSIS
+
+recursxz I<[OPTIONS]> I<dir1 dir2 ..>
+
+=head1 DESCRIPTION
+
+B<recursxz> is a tool for recursively compressing files in a directory tree.
+It can ignore already compressed files, and will uncompress a file it has
+compressed if it turns out that the compression led to the file growing and
+not shrinking.
+
+=head1 OPTIONS
+
+=over
+
+=item B<-h, --help>
+
+Display a short help screen and exit
+
+=item B<--version>
+
+Display version information and exit
+
+=item B<-v, --verbose>
+
+Increases the verbosity of mussort. Supply up to four times to further increase
+verbosity.
+
+=item B<--normal>
+
+Enable "normal" mode (this is the default). recursxz will search through a directory tree
+and compress all files that are not already compressed.
+
+=item B<--lowhanging>
+
+Enable "low-hanging fruit mode". In this mode recursxz will only operate on files that
+are 1MiB or larger. Simply put these are the files that you will gain the most from
+compressing.
+
+=item B<--fast>
+
+This works like --lowhanging, but also adds an upper limit on 100 MiB (ie. all
+files 100 MiB or larger will be ignored). This will give you a decent gain vs.
+speed tradeoff.
+
+=item B<--smash>
+
+This enables SMASH mode. In this mode recursxz will compress everything it finds that's
+not already compressed with xz, even files that are already compressed (ie. *.gz or *.zip).
+
+The gain for using --smash vs. any other mode is usually somewhere between tiny and
+nonexistent. Only use this if you require every byte possible as it will severely
+slow down recursxz for almost no gain at all.
+
+=head1 DEPENDENCIES
+
+Requires that the I<xz>-tool is installed, as that is what is used to
+perform the actual compression.
+
+=head1 BUGS AND LIMITATIONS
+
+If you find a bug, please report it at L<http://random.zerodogg.org/recursxz/bugs>.
+
+=head1 INCOMPATIBILITIES
+
+None known.
+
+=head1 AUTHOR
+
+B<recursxz> is written by Eskild Hustvedt I<<eskild -at- zerodogg d.ot org>>
+
+=head1 LICENSE AND COPYRIGHT
+
+Copyright (C) Eskild Hustvedt 2012
+
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
