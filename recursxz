@@ -3,7 +3,7 @@ use 5.010;
 use strict;
 use warnings;
 use File::Find;
-use File::Basename qw(dirname);
+use File::Basename qw(dirname basename);
 use Cwd qw(realpath);
 use Getopt::Long;
 use constant {
@@ -198,6 +198,72 @@ sub printv
 	# Flush STDOUT
 	$| = true;
 	$| = false;
+}
+
+# Purpose: Print formatted --help output
+# Usage: PrintHelp('-shortoption', '--longoption', 'description');
+#  Description will be reformatted to fit within a normal terminal
+sub PrintHelp
+{
+	# The short option
+	my $short = shift,
+	# The long option
+	my $long = shift;
+	# The description
+	my $desc = shift;
+	# The generated description that will be printed in the end
+	my $GeneratedDesc;
+	# The current line of the description
+	my $currdesc = '';
+	# The maximum length any line can be
+	my $maxlen = 80;
+	# The length the options take up
+	my $optionlen = 20;
+
+	# The length the short option take up
+	my $shortlen = 4;
+	if(length($short) > 4)
+	{
+		$shortlen = length($short);
+	}
+
+	# Check if the short/long are LONGER than optionlen, if so, we need
+	# to do some additional magic to take up only $maxlen.
+	# The +2 here is because we always add some space between them, no matter what
+	if (($shortlen + length($long) + 2) > $optionlen)
+	{
+		$optionlen = $shortlen + length($long) + 2;
+	}
+	# Split the description into lines
+	foreach my $part (split(/ /,$desc))
+	{
+		if(defined $GeneratedDesc)
+		{
+			if ((length($currdesc) + length($part) + 1 + $optionlen) > $maxlen)
+			{
+				$GeneratedDesc .= "\n";
+				$currdesc = '';
+			}
+			else
+			{
+				$currdesc .= ' ';
+				$GeneratedDesc .= ' ';
+			}
+		}
+		$currdesc .= $part;
+		$GeneratedDesc .= $part;
+	}
+	# Something went wrong
+	die('Option mismatch') if not $GeneratedDesc;
+	# Print it all
+	foreach my $description (split(/\n/,$GeneratedDesc))
+	{
+		printf "%-4s %-15s %s\n", $short,$long,$description;
+		# Set short and long to '' to ensure we don't print the options twice
+		$short = '';$long = '';
+	}
+	# Succeed
+	return true;
 }
 
 # Purpose: Print usage information and exit
