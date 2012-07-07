@@ -32,8 +32,10 @@ $SIG{INT} = sub
 my $VERSION = '0.1';
 my $total = 0;
 my $after = 0;
+my $forceCompressLevel;
 my $mode = MODE_NORMAL;
 my $verbosity = M_STANDARD;
+my $recompress = false;
 
 # Purpose: Exit with the supplied return value, outputting saved space
 #       information if needed
@@ -43,7 +45,19 @@ sub wexit
     if ($total > 0)
     {
         my ($saved,$type) = fsize($total-$after);
-        print 'Saved '.$saved.' '.$type."\n";
+        if ($saved > 0)
+        {
+            print 'Saved '.$saved.' '.$type."\n";
+        }
+        else
+        {
+            print 'Lost '.$saved.' '.$type;
+            if ($recompress)
+            {
+                print ' (likely due to recompression)';
+            }
+            print "\n";
+        }
     }
     exit(shift(@_));
 }
@@ -52,11 +66,26 @@ sub wexit
 # Usage: ProcessFile(FILE);
 sub ProcessFile
 {
-    my $file = shift;
+    my $file      = shift;
+    my $recompressAble = qr/\.(gz|bz2|lzma)$/;
+    my $compressed = qr/\.(rar|zip|rpm|deb|ace|bin|tgz|tbz2|txz|xz|gz|bz2|lzma)$/;
+    my $size_1M   = 1048576;
+    my $size_8M   = 8388608;
+    my $size_16M  = 16777216;
+    my $size_32M  = 33554432;
+    my $size_100M = 104857600;
     my $skipReason;
+    if ($recompress && $recompress eq 'gz')
+    {
+        $recompressAble = qr/\.(gz)$/;
+    }
     if (-d $file)
     {
         $skipReason = 'is a directory';
+    }
+    elsif(!-f $file)
+    {
+        $skipReason = 'is not a regular file';
     }
     elsif (! -w $file)
     {
@@ -71,15 +100,18 @@ sub ProcessFile
     {
         $skipReason = 'parent directory is not writable';
     }
-    elsif ($file =~ /\.(gz|rar|zip|xz|bz2|rpm|deb|ace|lzma|bin|tgz|tbz2|txz)$/)
+    elsif ($file =~ $compressed)
     {
-        if ($mode == MODE_SMASH && $file !~ /\.xz$/)
+        if (!$recompress || $file !~ $recompressAble)
         {
-            printv(M_VERYVERBOSE,'Would skip '.$file.', but running in smash mode so continuing'."\n");
-        }
-        else
-        {
-            $skipReason = 'filetype excluded';
+            if ($mode == MODE_SMASH && $file !~ /\.xz$/)
+            {
+                printv(M_VERYVERBOSE,'Would skip '.$file.', but running in smash mode so continuing'."\n");
+            }
+            else
+            {
+                $skipReason = 'filetype excluded';
+            }
         }
     }
 
@@ -91,7 +123,7 @@ sub ProcessFile
 
     if ($mode == MODE_LOWHANGING || $mode == MODE_FAST)
     {
-        if (-s $file < 1048576)
+        if (-s $file < $size_1M)
         {
             printv(M_VERBOSE,'Skipping '.$file.': too small (low hanging fruit mode in effect)'."\n");
             return;
@@ -99,16 +131,63 @@ sub ProcessFile
     }
     if ($mode == MODE_FAST)
     {
-        if (-s $file > 104857600)
+        if (-s $file > $size_100M)
         {
             printv(M_VERBOSE,'Skipping '.$file.': too large (fast mode in effect)'."\n");
             return;
         }
     }
 
-    print "Compressing $file ...\n";
+    my @xz = qw(xz);
+
     my $pre = -s $file;
-    if(system('xz',$file) != 0)
+    my $realPre = $pre;
+    if ($recompress && $file =~ $recompressAble)
+    {
+        print "Extracting and recompressing $file ...\n";
+        my $extracted = extractFile($file);
+        if (!defined $extracted)
+        {
+            return;
+        }
+        if (!-e $extracted)
+        {
+            print "Failed to uncompress $file, ignoring.\n";
+            return;
+        }
+        $file    = $extracted;
+        $realPre = -s $file;
+    }
+    else
+    {
+        print "Compressing $file ...\n";
+    }
+
+    if ($forceCompressLevel)
+    {
+        push(@xz,$forceCompressLevel);
+    }
+    else
+    {
+        if ($realPre > $size_32M)
+        {
+            push(@xz,'-9');
+        }
+        elsif($realPre > $size_16M)
+        {
+            push(@xz,'-8');
+        }
+        elsif($realPre > $size_8M)
+        {
+            push(@xz,'-7');
+        }
+        else
+        {
+            push(@xz,'-6');
+        }
+    }
+
+    if(system(@xz,$file) != 0)
     {
         print 'xz '.$file.' failed'."\n";
         print 'Press Control+C within two seconds to exit.'."\n";
@@ -125,9 +204,9 @@ sub ProcessFile
         return;
     }
     my $post = -s $file.'.xz';
-    if ($post > $pre)
+    if ($post > $realPre)
     {
-        my ($lost,$type) = fsize($post-$pre);
+        my ($lost,$type) = fsize($post-$realPre);
         print 'Lost '.$lost.' '.$type.' by compressing '.$file.', uncompressing it...'."\n";
         system('unxz',$file.'.xz');
     }
@@ -135,7 +214,14 @@ sub ProcessFile
     {
         $total += $pre;
         $after += $post;
-        printv(M_VERYVERBOSE,'Gained '.($pre-$post).' bytes by compressing '.$file."\n");
+        if ( ($pre-$post) > 0)
+        {
+            printv(M_VERYVERBOSE,'Gained '.($pre-$post).' bytes by compressing '.$file."\n");
+        }
+        else
+        {
+            printv(M_VERYVERBOSE,'Lost '.($pre-$post).' bytes by re-compressing '.$file."\n");
+        }
     }
 }
 
@@ -276,6 +362,9 @@ sub usage
     PrintHelp('','--lowhanging','Enable "low-hanging fruit mode", only compress files >1MiB, where the possibility for gains are the greatest');
     PrintHelp('','--fast','Like --lowhanging, but will also skip files >100MiB');
     PrintHelp('','--smash','Compress everything, even files already compressed with ie. gzip');
+    PrintHelp('','--recompress','Uncompress any files compressed with gzip, bzip2 or lzma, and then compress them with xz (in addition to compressing uncompressed files)');
+    PrintHelp('','--recompress-gz','Same as --recompress, but will only recompress gzip-compressed files');
+    PrintHelp('','-0 .. -9','Force xz compression level. The default is dynamic (see manpage)');
     wexit(0);
 }
 
@@ -284,6 +373,59 @@ sub usage
 sub InPath
 {
 	foreach (split /:/, $ENV{PATH}) { if (-x "$_/@_" and not -d "$_/@_" ) {	return 1; } } return 0;
+}
+
+# Purpose: Extract a file
+# Usage: extractFile(FILE);
+#
+# Returns undef if the tool to uncompress was unavailable.
+# Returns the new filename otherwise (which may or may not exist).
+sub extractFile
+{
+    my $file = shift;
+
+    given($file)
+    {
+        when(/\.bz2$/)
+        {
+            if (!InPath('bunzip2'))
+            {
+                print 'bunzip2 is not installed, can\'t uncompress'."\n";
+                return;
+            }
+            system('bunzip2',$file);
+            $file =~ s/\.bz2$//;
+        }
+
+        when(/\.gz$/)
+        {
+            if (!InPath('gunzip'))
+            {
+                print 'gunzip is not installed, can\'t uncompress'."\n";
+                return;
+            }
+            system('gunzip',$file);
+            $file =~ s/\.gz$//;
+        }
+
+        when(/\.lzma$/)
+        {
+            if (!InPath('unlzma'))
+            {
+                print 'unlzma is not installed, can\'t uncompress'."\n";
+                return;
+            }
+            system('unlzma',$file);
+            $file =~ s/\.lzma$//;
+        }
+
+        default
+        {
+            warn('Attempt to uncompress unknown filetype: '.$file."\n");
+            wexit(132);
+        }
+    }
+    return $file;
 }
 
 # Purpose: Main logic
@@ -310,6 +452,16 @@ sub main
         'version' => sub {
             print "recursxz version $VERSION\n";
             exit(0);
+        },
+        'recompress' => \$recompress,
+        'recompress-gz' => sub
+        {
+            $recompress = 'gz';
+        },
+        '0|1|2|3|4|5|6|7|8|9' => sub
+        {
+            shift;
+            $forceCompressLevel = '-'.shift;
         },
     );
 
@@ -431,6 +583,38 @@ not already compressed with xz, even files that are already compressed (ie. *.gz
 The gain for using --smash vs. any other mode is usually somewhere between tiny and
 nonexistent. Only use this if you require every byte possible as it will severely
 slow down recursxz for almost no gain at all.
+
+=item B<--recompress>
+
+Re-compress files that are already compressed with gzip, bzip2 or lzma.
+Usually the gains you may see from this are minimal for trees with mostly
+bzip2 or lzma files (and you may even in some cases lose space), the gains
+for gzip-heavy trees are usually good (see --recompress-gz).
+
+=item B<--recompress-gz>
+
+Same as --recompress, but only recompress gzip-compressed files.
+
+=item B<-0 .. -9>
+
+This sets which compression level will be used for I<xz>, see the manpage of xz
+for more information. See the DEFAULT COMPRESSION LEVEL section for information about
+the recursxz defauls.
+
+=back
+
+=head1 DEFAULT COMPRESSION LEVEL
+
+The default compression level depends upon the size of the file
+being compressed:
+
+    File size   | Level
+    > 32 MiB    | -9
+    > 16 MiB    | -8
+    >  8 MiB    | -7
+    <  8 MiB    | -6
+
+See the manpage for I<xz> for details on each compression level.
 
 =head1 DEPENDENCIES
 
