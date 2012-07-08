@@ -463,7 +463,11 @@ sub main
             shift;
             $forceCompressLevel = '-'.shift;
         },
-    );
+    ) or die('See '.basename($0).' --help for more information'."\n");
+    if (!@ARGV)
+    {
+        usage();
+    }
 
     if (!InPath('xz'))
     {
