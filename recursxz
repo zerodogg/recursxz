@@ -362,8 +362,8 @@ sub usage
     PrintHelp('','--lowhanging','Enable "low-hanging fruit mode", only compress files >1MiB, where the possibility for gains are the greatest');
     PrintHelp('','--fast','Like --lowhanging, but will also skip files >100MiB');
     PrintHelp('','--smash','Compress everything, even files already compressed with ie. gzip');
-    PrintHelp('','--recompress','Uncompress any files compressed with gzip, bzip2 or lzma, and then compress them with xz (in addition to compressing uncompressed files)');
-    PrintHelp('','--recompress-gz','Same as --recompress, but will only recompress gzip-compressed files');
+    PrintHelp('-c','--recompress','Uncompress any files compressed with gzip, bzip2 or lzma, and then compress them with xz (in addition to compressing uncompressed files)');
+    PrintHelp('-g','--recompress-gz','Same as --recompress, but will only recompress gzip-compressed files');
     PrintHelp('','-0 .. -9','Force xz compression level. The default is dynamic (see manpage)');
     wexit(0);
 }
@@ -453,8 +453,8 @@ sub main
             print "recursxz version $VERSION\n";
             exit(0);
         },
-        'recompress' => \$recompress,
-        'recompress-gz' => sub
+        'c|recompress' => \$recompress,
+        'g|recompress-gz' => sub
         {
             $recompress = 'gz';
         },
@@ -588,14 +588,14 @@ The gain for using --smash vs. any other mode is usually somewhere between tiny 
 nonexistent. Only use this if you require every byte possible as it will severely
 slow down recursxz for almost no gain at all.
 
-=item B<--recompress>
+=item B<-c, --recompress>
 
 Re-compress files that are already compressed with gzip, bzip2 or lzma.
 Usually the gains you may see from this are minimal for trees with mostly
 bzip2 or lzma files (and you may even in some cases lose space), the gains
 for gzip-heavy trees are usually good (see --recompress-gz).
 
-=item B<--recompress-gz>
+=item B<-g, --recompress-gz>
 
 Same as --recompress, but only recompress gzip-compressed files.
 
