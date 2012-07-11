@@ -474,6 +474,69 @@ sub extractFile
     return $file;
 }
 
+# Purpose: Get the version of a shell utility
+# Usage: version = getVersionFrom('command');
+sub getVersionFrom
+{
+    if (!InPath($_[0]))
+    {
+        return 'not installed';
+    }
+    eval('use IPC::Open3 qw(open3);');
+    open3(my $in, my $out, my $err,@_);
+    my $data;
+    if ($out)
+    {
+        while(<$out>)
+        {
+            $data .= $_;
+        }
+    }
+    if ($err)
+    {
+        while(<$err>)
+        {
+            $data .= $_;
+        }
+        close($err);
+    }
+    close($in);close($out);
+    $data =~ s/\n.*//;
+    $data =~ s/^\w+//;
+    $data =~ s/^\D+(\S+).+/$1/s;
+    $data =~ s/,//g;
+    return $data;
+}
+
+# Purpose: Output some information useful for debugging and then exit
+# Usage: debugInfo();
+sub debugInfo
+{
+    print "recursxz version $VERSION\n";
+	print "\n";
+	my $pattern = "%-28s: %s\n";
+    printf($pattern, 'Perl version', sprintf('%vd',$^V));
+    foreach my $util (qw(xz bunzip2 gunzip unlzma file))
+    {
+        printf($pattern,$util.' version',getVersionFrom($util,'--version'));
+    }
+
+    eval('use Digest::MD5;');
+    my $md5 = Digest::MD5->new();
+    my $self = $0;
+    if(not -f $self)
+    {
+        $self = InPath($self);
+    }
+    open(my $f,'<',$self);
+    $md5->addfile($f);
+    my $digest = $md5->hexdigest;
+    close($f);
+    printf($pattern,'MD5',$digest);
+
+    wexit(0);
+}
+
 # Purpose: Main logic
 sub main
 {
@@ -504,6 +567,7 @@ sub main
         'v|verbose+' => \$verbosity,
         'older-than=i' => \$olderThan,
         'dry-run' => \$dryRun,
+        'debuginfo' => \&debugInfo,
         'version' => sub {
             print "recursxz version $VERSION\n";
             exit(0);
