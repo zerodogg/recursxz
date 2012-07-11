@@ -5,13 +5,15 @@ use warnings;
 use File::Find;
 use File::Basename qw(dirname basename);
 use File::stat;
+use IPC::Open2;
 use Cwd qw(realpath);
 use Getopt::Long;
 use constant {
     MODE_NORMAL => 1,
     MODE_LOWHANGING => 2,
-    MODE_SMASH => 3,
-    MODE_FAST => 4,
+    MODE_LOWHANGING_SMART => 3,
+    MODE_SMASH => 4,
+    MODE_FAST => 5,
 
 	# Verbosity levels
 	M_STANDARD => 1,
@@ -30,15 +32,14 @@ $SIG{INT} = sub
     wexit(1);
 };
 
-my $VERSION = '0.1';
-my $total = 0;
-my $after = 0;
-my $olderThan = 0;
-my $forceCompressLevel;
-my $mode = MODE_NORMAL;
-my $verbosity = M_STANDARD;
+my $VERSION    = '0.1';
+my $total      = 0;
+my $after      = 0;
+my $olderThan  = 0;
+my $dryRun     = false;
+my $mode       = MODE_NORMAL;
+my $verbosity  = M_STANDARD;
 my $recompress = false;
-my $dryRun = false;
 my $forceCompressLevel;
 
 # Purpose: Exit with the supplied return value, outputting saved space
@@ -66,6 +67,18 @@ sub wexit
     exit(shift(@_));
 }
 
+# Purpose: Use 'file' to find out if a file is a text file or not
+# Usage: bool = IsText('path/to/file');
+sub IsText
+{
+    my $file = shift;
+    open2(my $out,my $in,'file','--brief','--mime-type',$file);
+    my $type = <$out>;
+    close($out) if $out;close($in) if $in;
+    chomp($type);
+    return $type =~ m{^text/};
+}
+
 # Purpose: Process a file, compressing if needed
 # Usage: ProcessFile(FILE);
 sub ProcessFile
@@ -73,6 +86,7 @@ sub ProcessFile
     my $file      = shift;
     my $recompressAble = qr/\.(gz|bz2|lzma)$/;
     my $compressed = qr/\.(rar|zip|rpm|deb|ace|bin|tgz|tbz2|txz|xz|gz|bz2|lzma)$/;
+    my $size_100K = 102400;
     my $size_1M   = 1048576;
     my $size_8M   = 8388608;
     my $size_16M  = 16777216;
@@ -125,16 +139,28 @@ sub ProcessFile
 
     if ($skipReason)
     {
-        printv(M_VERBOSE,'Skipping '.$file.': '.$skipReason."\n");
+        printv(M_VERYVERBOSE,'Skipping '.$file.': '.$skipReason."\n");
         return;
     }
 
-    if ($mode == MODE_LOWHANGING || $mode == MODE_FAST)
+    if ($mode == MODE_LOWHANGING || $mode == MODE_LOWHANGING_SMART || $mode == MODE_FAST)
     {
         if (-s $file < $size_1M)
         {
-            printv(M_VERBOSE,'Skipping '.$file.': too small (low hanging fruit mode in effect)'."\n");
-            return;
+            my $skip = true;
+            if ($mode == MODE_LOWHANGING_SMART)
+            {
+                if (-s $file > $size_100K && IsText($file))
+                {
+                    printv(M_DEBUG,'Will compress text file '.$file.' in low hanging fruit mode');
+                    $skip = false;
+                }
+            }
+            if ($skip)
+            {
+                printv(M_VERYVERBOSE,'Skipping '.$file.': too small (low hanging fruit mode in effect)'."\n");
+                return;
+            }
         }
     }
     if ($mode == MODE_FAST)
@@ -377,7 +403,7 @@ sub usage
     print 'Usage: ' . basename($0) . " [OPTIONS] dir1 dir2 ..\n";
     PrintHelp('-h','--help','Display this help screen');
     PrintHelp('','--version','Display version information');
-    PrintHelp('','--lowhanging','Enable "low-hanging fruit mode", only compress files >1MiB, where the possibility for gains are the greatest');
+    PrintHelp('','--lowhanging','Enable "low-hanging fruit mode", only compress files that are expected to give the highest gains in space');
     PrintHelp('','--fast','Like --lowhanging, but will also skip files >100MiB');
     PrintHelp('','--smash','Compress everything, even files already compressed with ie. gzip');
     PrintHelp('','--older-than N','Only compress files whose modification time is older than N days (where N is a positive integer)');
@@ -463,7 +489,14 @@ sub main
             $mode = MODE_FAST;
         },
         'lowhanging' => sub {
-            $mode = MODE_LOWHANGING;
+            if(InPath('file'))
+            {
+                $mode = MODE_LOWHANGING_SMART;
+            }
+            else
+            {
+                $mode = MODE_LOWHANGING;
+            }
         },
         'smash' => sub {
             $mode = MODE_SMASH;
@@ -501,13 +534,17 @@ sub main
     }
 
     my @modeNames;
-    $modeNames[MODE_SMASH]      = 'smash';
-    $modeNames[MODE_LOWHANGING] = '"low-hanging fruit"';
-    $modeNames[MODE_NORMAL]     = 'normal';
-    $modeNames[MODE_FAST]       = 'fast';
+    $modeNames[MODE_SMASH]            = 'smash';
+    $modeNames[MODE_LOWHANGING]       = '"low-hanging fruit"';
+    $modeNames[MODE_LOWHANGING_SMART] = 'smart "low-hanging fruit"';
+    $modeNames[MODE_NORMAL]           = 'normal';
+    $modeNames[MODE_FAST]             = 'fast';
 
-    printv(M_VERBOSE,'Only processing files older than '.$olderThan.'days'."\n");
-    $olderThan = time-($olderThan * 86400);
+    if ($olderThan)
+    {
+        printv(M_VERBOSE,'Only processing files older than '.$olderThan.'days'."\n");
+        $olderThan = time-($olderThan * 86400);
+    }
 
     foreach my $Dir (@ARGV)
     {
