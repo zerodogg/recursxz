@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use File::Find;
 use File::Basename qw(dirname basename);
+use File::stat;
 use Cwd qw(realpath);
 use Getopt::Long;
 use constant {
@@ -32,6 +33,7 @@ $SIG{INT} = sub
 my $VERSION = '0.1';
 my $total = 0;
 my $after = 0;
+my $olderThan = 0;
 my $forceCompressLevel;
 my $mode = MODE_NORMAL;
 my $verbosity = M_STANDARD;
@@ -99,6 +101,10 @@ sub ProcessFile
     elsif(! -w dirname($file))
     {
         $skipReason = 'parent directory is not writable';
+    }
+    elsif($olderThan && stat($file)->mtime > $olderThan)
+    {
+        $skipReason = 'modification time too recent';
     }
     elsif ($file =~ $compressed)
     {
@@ -362,6 +368,7 @@ sub usage
     PrintHelp('','--lowhanging','Enable "low-hanging fruit mode", only compress files >1MiB, where the possibility for gains are the greatest');
     PrintHelp('','--fast','Like --lowhanging, but will also skip files >100MiB');
     PrintHelp('','--smash','Compress everything, even files already compressed with ie. gzip');
+    PrintHelp('','--older-than N','Only compress files whose modification time is older than N days (where N is a positive integer)');
     PrintHelp('-c','--recompress','Uncompress any files compressed with gzip, bzip2 or lzma, and then compress them with xz (in addition to compressing uncompressed files)');
     PrintHelp('-g','--recompress-gz','Same as --recompress, but will only recompress gzip-compressed files');
     PrintHelp('','-0 .. -9','Force xz compression level. The default is dynamic (see manpage)');
@@ -449,6 +456,7 @@ sub main
             $mode = MODE_SMASH;
         },
         'v|verbose+' => \$verbosity,
+        'older-than=i' => \$olderThan,
         'version' => sub {
             print "recursxz version $VERSION\n";
             exit(0);
@@ -483,6 +491,9 @@ sub main
     $modeNames[MODE_LOWHANGING] = '"low-hanging fruit"';
     $modeNames[MODE_NORMAL]     = 'normal';
     $modeNames[MODE_FAST]       = 'fast';
+
+    printv(M_VERBOSE,'Only processing files older than '.$olderThan.'days'."\n");
+    $olderThan = time-($olderThan * 86400);
 
     foreach my $Dir (@ARGV)
     {
@@ -587,6 +598,12 @@ not already compressed with xz, even files that are already compressed (ie. *.gz
 The gain for using --smash vs. any other mode is usually somewhere between tiny and
 nonexistent. Only use this if you require every byte possible as it will severely
 slow down recursxz for almost no gain at all.
+
+=item B<--older-than> I<N>
+
+Only compress files whose modification time (mtime) is older than I<N> days.
+This means that files that have been modified or created in the last I<N> days
+will be skipped.
 
 =item B<-c, --recompress>
 
