@@ -39,6 +39,7 @@ my $mode = MODE_NORMAL;
 my $verbosity = M_STANDARD;
 my $recompress = false;
 my $dryRun = false;
+my $forceCompressLevel;
 
 # Purpose: Exit with the supplied return value, outputting saved space
 #       information if needed
