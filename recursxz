@@ -38,6 +38,7 @@ my $forceCompressLevel;
 my $mode = MODE_NORMAL;
 my $verbosity = M_STANDARD;
 my $recompress = false;
+my $dryRun = false;
 
 # Purpose: Exit with the supplied return value, outputting saved space
 #       information if needed
@@ -150,6 +151,11 @@ sub ProcessFile
     my $realPre = $pre;
     if ($recompress && $file =~ $recompressAble)
     {
+        if ($dryRun)
+        {
+            print "Would extract and recompress $file\n";
+            return;
+        }
         print "Extracting and recompressing $file ...\n";
         my $extracted = extractFile($file);
         if (!defined $extracted)
@@ -166,6 +172,11 @@ sub ProcessFile
     }
     else
     {
+        if ($dryRun)
+        {
+            print "Would compress $file\n";
+            return;
+        }
         print "Compressing $file ...\n";
     }
 
@@ -372,6 +383,7 @@ sub usage
     PrintHelp('-c','--recompress','Uncompress any files compressed with gzip, bzip2 or lzma, and then compress them with xz (in addition to compressing uncompressed files)');
     PrintHelp('-g','--recompress-gz','Same as --recompress, but will only recompress gzip-compressed files');
     PrintHelp('','-0 .. -9','Force xz compression level. The default is dynamic (see manpage)');
+    PrintHelp('','--dry-run','Show what would have been done, but don\'t actually do it');
     wexit(0);
 }
 
@@ -457,6 +469,7 @@ sub main
         },
         'v|verbose+' => \$verbosity,
         'older-than=i' => \$olderThan,
+        'dry-run' => \$dryRun,
         'version' => sub {
             print "recursxz version $VERSION\n";
             exit(0);
