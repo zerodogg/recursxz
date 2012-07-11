@@ -695,15 +695,15 @@ and compress all files that are not already compressed.
 
 =item B<--lowhanging>
 
-Enable "low-hanging fruit mode". In this mode recursxz will only operate on files that
-are 1MiB or larger. Simply put these are the files that you will gain the most from
-compressing.
+Enable "low-hanging fruit mode". In this mode recursxz will only operate on
+binary files that are 1MiB or larger, and text files that are 100KiB or larger.
+Simply put these are the files that you will gain the most from compressing.
 
 =item B<--fast>
 
 This works like --lowhanging, but also adds an upper limit on 100 MiB (ie. all
-files 100 MiB or larger will be ignored). This will give you a decent gain vs.
-speed tradeoff.
+files 100 MiB or larger will be ignored). It also raises the text file limit to
+1MiB, instead of 100KiB. This will give you a decent gain vs. speed tradeoff.
 
 =item B<--smash>
 
@@ -737,6 +737,14 @@ This sets which compression level will be used for I<xz>, see the manpage of xz
 for more information. See the DEFAULT COMPRESSION LEVEL section for information about
 the recursxz defauls.
 
+=item B<--dry-run>
+
+Show what would have been done, but don't actually do it.
+
+=item B<--debuginfo>
+
+Display some information useful for debugging.
+
 =back
 
 =head1 DEFAULT COMPRESSION LEVEL
@@ -760,6 +768,8 @@ perform the actual compression.
 =head1 BUGS AND LIMITATIONS
 
 If you find a bug, please report it at L<http://random.zerodogg.org/recursxz/bugs>.
+
+Include the output of 'recursxz --debuginfo' in any bug report.
 
 =head1 INCOMPATIBILITIES
 
