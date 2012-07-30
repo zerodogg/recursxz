@@ -640,6 +640,7 @@ sub main
         print 'Operating on '.realpath($Dir).' in '.$modeNames[$mode].' mode'."\n";
 
         find({
+                follow => 0,
                 no_chdir => 1,
                 wanted => sub { ProcessFile($File::Find::name); },
                 preprocess => sub {
