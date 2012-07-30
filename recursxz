@@ -14,6 +14,7 @@ use constant {
     MODE_LOWHANGING_SMART => 3,
     MODE_SMASH => 4,
     MODE_FAST => 5,
+    MODE_FAST_SMART => 6,
 
 	# Verbosity levels
 	M_STANDARD => 1,
@@ -143,12 +144,12 @@ sub ProcessFile
         return;
     }
 
-    if ($mode == MODE_LOWHANGING || $mode == MODE_LOWHANGING_SMART || $mode == MODE_FAST)
+    if ($mode == MODE_LOWHANGING || $mode == MODE_LOWHANGING_SMART || $mode == MODE_FAST || $mode == MODE_FAST_SMART)
     {
         if (-s $file < $size_1M)
         {
             my $skip = true;
-            if ($mode == MODE_LOWHANGING_SMART)
+            if ($mode == MODE_LOWHANGING_SMART || $mode == MODE_FAST_SMART)
             {
                 if (-s $file > $size_100K && IsText($file))
                 {
@@ -163,7 +164,7 @@ sub ProcessFile
             }
         }
     }
-    if ($mode == MODE_FAST)
+    if ($mode == MODE_FAST || $mode == MODE_FAST_SMART)
     {
         if (-s $file > $size_100M)
         {
@@ -549,7 +550,14 @@ sub main
         },
         'fast' => sub
         {
-            $mode = MODE_FAST;
+            if(InPath('file'))
+            {
+                $mode = MODE_FAST_SMART;
+            }
+            else
+            {
+                $mode = MODE_FAST;
+            }
         },
         'lowhanging' => sub {
             if(InPath('file'))
@@ -603,6 +611,7 @@ sub main
     $modeNames[MODE_LOWHANGING_SMART] = 'smart "low-hanging fruit"';
     $modeNames[MODE_NORMAL]           = 'normal';
     $modeNames[MODE_FAST]             = 'fast';
+    $modeNames[MODE_FAST_SMART]       = 'smart fast';
 
     if ($olderThan)
     {
